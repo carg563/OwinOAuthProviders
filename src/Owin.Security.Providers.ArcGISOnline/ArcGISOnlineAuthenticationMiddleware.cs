@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Globalization;
+using System.Net;
 using System.Net.Http;
 using Microsoft.Owin;
 using Microsoft.Owin.Logging;
@@ -19,6 +20,9 @@ namespace Owin.Security.Providers.ArcGISOnline
             ArcGISOnlineAuthenticationOptions options)
             : base(next, options)
         {
+
+            ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
+            
             if (string.IsNullOrWhiteSpace(Options.ClientId))
                 throw new ArgumentException(string.Format(CultureInfo.CurrentCulture,
                     Resources.Exception_OptionMustBeProvided, "ClientId"));
@@ -44,9 +48,10 @@ namespace Owin.Security.Providers.ArcGISOnline
 
             _httpClient = new HttpClient(ResolveHttpMessageHandler(Options))
             {
+                 
                 Timeout = Options.BackchannelTimeout,
                 MaxResponseContentBufferSize = 1024*1024*10,
-            };
+            };            
             _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Microsoft Owin ArcGISOnline middleware");
             _httpClient.DefaultRequestHeaders.ExpectContinue = false;
         }
@@ -67,7 +72,7 @@ namespace Owin.Security.Providers.ArcGISOnline
         private static HttpMessageHandler ResolveHttpMessageHandler(ArcGISOnlineAuthenticationOptions options)
         {
             var handler = options.BackchannelHttpHandler ?? new WebRequestHandler();
-
+            
             // If they provided a validator, apply it or fail.
             if (options.BackchannelCertificateValidator == null) return handler;
             // Set the cert validate callback

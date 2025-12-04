@@ -9,6 +9,8 @@ using Microsoft.Owin.Logging;
 using Microsoft.Owin.Security;
 using Microsoft.Owin.Security.Infrastructure;
 using Newtonsoft.Json;
+using Serilog;
+using ILogger = Microsoft.Owin.Logging.ILogger;
 
 namespace Owin.Security.Providers.ArcGISOnline
 {
@@ -31,15 +33,22 @@ namespace Owin.Security.Providers.ArcGISOnline
 
             try
             {
+                Log.Information("Authenticating Post Challenge");
                 string code = null;
                 string state = null;
 
                 var query = Request.Query;
+
+                Log.Information($"Authenticating: Request query {Request.Query}");
+
                 var values = query.GetValues("code");
                 if (values != null && values.Count == 1)
                 {
                     code = values[0];
                 }
+
+                Log.Information($"Authenticating: code from Esri {code}");
+
                 values = query.GetValues("state");
                 if (values != null && values.Count == 1)
                 {
@@ -52,13 +61,14 @@ namespace Owin.Security.Providers.ArcGISOnline
                     return null;
                 }
                 // OAuth2 10.12 CSRF
-                if (!ValidateCorrelationId(properties,_logger))
+                if (!ValidateCorrelationId(properties, _logger))
                 {
                     return new AuthenticationTicket(null, properties);
                 }
-            
+
                 var requestPrefix = Request.Scheme + "://" + Request.Host;
                 var redirectUri = requestPrefix + Request.PathBase + Options.CallbackPath;
+                Log.Information($"Authenticating: Redirect Uri {redirectUri}");
 
                 // Build up the body for the token request
                 var body = new List<KeyValuePair<string, string>>
@@ -74,15 +84,36 @@ namespace Owin.Security.Providers.ArcGISOnline
                 var requestMessage = new HttpRequestMessage(HttpMethod.Post, Options.Endpoints.TokenEndpoint);
                 requestMessage.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
                 requestMessage.Content = new FormUrlEncodedContent(body);
+
+                Log.Information($"Authenticating: Authorization EndPoint {requestMessage.RequestUri.ToString()}");
+
                 var tokenResponse = await _httpClient.SendAsync(requestMessage);
                 tokenResponse.EnsureSuccessStatusCode();
+                Log.Information($"Authenticating: Received success response from Token endpoint");
+
                 var text = await tokenResponse.Content.ReadAsStringAsync();
 
                 // Deserializes the token response
                 dynamic response = JsonConvert.DeserializeObject<dynamic>(text);
                 var accessToken = (string)response.access_token;
                 var refreshToken = (string)response.refresh_token;
+                if (accessToken == null)
+                {
+                    Log.Information($"Authenticating: token is null??");
+                }
+                if (response.expires_in == null)
+                {
+                    Log.Information($"Authenticating: expiry is null??");
+                }
 
+                var expiresIn = 900;
+                if (response.expires_in != null)
+                {
+                    expiresIn = (int)response.expires_in;
+                }
+
+
+                Log.Information($"Authenticating: Retrieving ArcGIS Online user information");
                 // Get the ArcGISOnline user
                 var userRequest = new HttpRequestMessage(HttpMethod.Get, Options.Endpoints.UserInfoEndpoint + "?f=json&token=" + Uri.EscapeDataString(accessToken));
                 userRequest.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
@@ -91,13 +122,17 @@ namespace Owin.Security.Providers.ArcGISOnline
                 text = await userResponse.Content.ReadAsStringAsync();
                 var user = JsonConvert.DeserializeObject<Provider.ArcGISOnlineUser>(text);
 
-                var context = new ArcGISOnlineAuthenticatedContext(Context, user, accessToken, refreshToken)
+                Log.Information($"Authenticating: Retrieved user information");
+
+                var context = new ArcGISOnlineAuthenticatedContext(Context, user, accessToken, refreshToken, expiresIn)
                 {
                     Identity = new ClaimsIdentity(
                         Options.AuthenticationType,
                         ClaimsIdentity.DefaultNameClaimType,
                         ClaimsIdentity.DefaultRoleClaimType)
                 };
+
+
                 if (!string.IsNullOrEmpty(context.Id))
                 {
                     context.Identity.AddClaim(new Claim(ClaimTypes.NameIdentifier, context.Id, XmlSchemaString, Options.AuthenticationType));
@@ -119,14 +154,23 @@ namespace Owin.Security.Providers.ArcGISOnline
                     context.Identity.AddClaim(new Claim("urn:ArcGISOnline:url", context.Link, XmlSchemaString, Options.AuthenticationType));
                 }
 
+                Log.Information($"Authenticating: Created claims identity");
+
                 context.Properties = properties;
-              
+
                 await Options.Provider.Authenticated(context);
+
+                Log.Information($"Authenticating: Return claims identity");
 
                 return new AuthenticationTicket(context.Identity, context.Properties);
             }
             catch (Exception ex)
             {
+                Log.Error(ex, $"An error occured trying to Authenticate: {ex.Message}");
+                if (ex.InnerException != null)
+                {
+                    Log.Error(ex.InnerException, $"An error occured trying to Authenticate: {ex.InnerException.Message}");
+                }
                 _logger.WriteError(ex.Message);
             }
             return new AuthenticationTicket(null, properties);
@@ -156,7 +200,7 @@ namespace Owin.Security.Providers.ArcGISOnline
             var redirectUri =
                 baseUri +
                 Options.CallbackPath;
-            var properties=challenge.Properties;
+            var properties = challenge.Properties;
             if (string.IsNullOrEmpty(properties.RedirectUri))
             {
                 properties.RedirectUri = currentUri;
@@ -220,6 +264,7 @@ namespace Owin.Security.Providers.ArcGISOnline
             var redirectUri = context.RedirectUri;
             if (context.Identity == null)
             {
+
                 // add a redirect hint that sign-in failed in some way
                 redirectUri = WebUtilities.AddQueryString(redirectUri, "error", "access_denied");
             }

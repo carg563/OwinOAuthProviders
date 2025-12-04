@@ -1,5 +1,5 @@
 // Copyright (c) Microsoft Open Technologies, Inc. All rights reserved. See License.txt in the project root for license information.
-
+using System;
 using System.Security.Claims;
 using Microsoft.Owin;
 using Microsoft.Owin.Security;
@@ -20,17 +20,34 @@ namespace Owin.Security.Providers.ArcGISOnline
         /// <param name="user">The ArcGIS Online user</param>
         /// <param name="accessToken">ArcGIS Online Access token</param>
         /// <param name="refreshToken">ArcGIS Online Refresh token</param>
-        public ArcGISOnlineAuthenticatedContext(IOwinContext context, ArcGISOnlineUser user, string accessToken, string refreshToken)
+        public ArcGISOnlineAuthenticatedContext(IOwinContext context, ArcGISOnlineUser user, string accessToken, string refreshToken, int? expires_in)
             : base(context)
         {
+            var expireIn = expires_in.HasValue == true ? expires_in.Value : 900;
+
             AccessToken = accessToken;
             RefreshToken = refreshToken;
+            ExpiresIn = expires_in;
             Id = user.Username;
             Name = user.FullName;
             Link = "https://www.arcgis.com/sharing/rest/community/users/" + Id;
             UserName = Id;
             Email = user.Email;
+            ExpiresAt = DateTime.Now.AddSeconds(expireIn);
+            OrgId = user.OrgId;
+            Role = user.Role;
         }
+
+        /// <summary>
+        /// Gets the ArcGIS Online access token
+        /// </summary>
+        public string Role { get; private set; }
+
+        /// <summary>
+        /// Gets the ArcGIS Online access token
+        /// </summary>
+        public string OrgId { get; private set; }
+
 
         /// <summary>
         /// Gets the ArcGIS Online access token
@@ -68,6 +85,16 @@ namespace Owin.Security.Providers.ArcGISOnline
         /// Gets the <see cref="ClaimsIdentity"/> representing the user
         /// </summary>
         public ClaimsIdentity Identity { get; set; }
+
+        ///<summary>
+        /// Gets the length of time the token is valid for in seconds
+        ///</summary>
+        public int? ExpiresIn {get; private set;}
+
+        ///<summary>
+        ///Gets the expiry time of the token
+        ///</summary>
+        public DateTime ExpiresAt {get; private set;}
 
         /// <summary>
         /// Gets or sets a property bag for common authentication properties
